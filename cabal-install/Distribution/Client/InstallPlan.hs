@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables, NamedFieldPuns #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Distribution.Client.InstallPlan
@@ -19,11 +19,16 @@ module Distribution.Client.InstallPlan (
   -- * Operations on 'InstallPlan's
   new,
   toList,
+  mapPreservingGraph,
+
   ready,
   processing,
   completed,
   failed,
   remove,
+  reverted,
+  preexisting,
+
   showPlanIndex,
   showInstallPlan,
 
@@ -40,6 +45,12 @@ module Distribution.Client.InstallPlan (
 
   -- ** Querying the install plan
   dependencyClosure,
+  reverseDependencyClosure,
+  topologicalOrder,
+  reverseTopologicalOrder,
+
+  -- Hacking
+--  setPackagesBuildInplaceOnly
   ) where
 
 import Distribution.Package
@@ -66,6 +77,7 @@ import Data.Maybe
          ( fromMaybe, maybeToList )
 import qualified Data.Graph as Graph
 import Data.Graph (Graph)
+import qualified Data.Tree as Tree
 import Control.Exception
          ( assert )
 import Data.Maybe (catMaybes)
@@ -132,6 +144,7 @@ data PlanPackage ipkg srcpkg iresult ifailure
    | Processing  (ReadyPackage srcpkg ipkg)
    | Installed   (ReadyPackage srcpkg ipkg) (Maybe ipkg) iresult
    | Failed      srcpkg ifailure
+  deriving (Eq, Show)
 
 instance (Package ipkg, Package srcpkg) => 
          Package (PlanPackage ipkg srcpkg iresult ifailure) where
@@ -408,6 +421,72 @@ checkConfiguredPackage (Failed     _ _) = Nothing
 checkConfiguredPackage pkg                =
   internalError $ "not configured or no such pkg " ++ display (packageId pkg)
 
+-- | Reverts packages back to the configured state. This can be used to re-use
+-- a completed (or failed) install plan, to rebuild certain packages later.
+--
+-- * The package must exist in the graph and be in the processing, installed
+-- or failed state.
+--
+reverted :: (HasInstalledPackageId ipkg,   PackageFixedDeps ipkg,
+             HasInstalledPackageId srcpkg, PackageFixedDeps srcpkg)
+         => [srcpkg]
+         -> InstallPlan ipkg srcpkg iresult ifailure
+         -> InstallPlan ipkg srcpkg iresult ifailure
+reverted pkgs plan = assert (invariant plan') plan'
+  where
+    plan' = plan {
+              planIndex = PackageIndex.merge (planIndex plan) configuredPkgs
+            }
+    configuredPkgs = PackageIndex.fromList [Configured pkg | pkg <- pkgs]
+
+-- | Replace a ready package with a pre-existing one. The pre-existing one
+-- must have exactly the same dependencies as the source one was configured
+-- with.
+--
+preexisting :: (HasInstalledPackageId ipkg,   PackageFixedDeps ipkg,
+                HasInstalledPackageId srcpkg, PackageFixedDeps srcpkg)
+           => InstalledPackageId
+            -> ipkg
+            -> InstallPlan ipkg srcpkg iresult ifailure
+            -> InstallPlan ipkg srcpkg iresult ifailure
+preexisting pkgid ipkg plan = assert (invariant plan') plan'
+  where
+    plan' = plan {
+                    -- NB: installation can change the IPID, so better
+                    -- record it in the fake mapping...
+      planFakeMap = Map.insert pkgid
+                               (installedPackageId ipkg)
+                               (planFakeMap plan),
+      planIndex   = PackageIndex.insert (PreExisting ipkg)
+                    -- ...but be sure to use the *old* IPID for the lookup for
+                    -- the preexisting record
+                  . PackageIndex.deleteInstalledPackageId pkgid
+                  $ planIndex plan
+    }
+
+
+mapPreservingGraph :: (HasInstalledPackageId ipkg, HasInstalledPackageId srcpkg,
+                       HasInstalledPackageId ipkg',   PackageFixedDeps ipkg',
+                       HasInstalledPackageId srcpkg', PackageFixedDeps srcpkg')
+                   => (  PlanPackage ipkg  srcpkg  iresult  ifailure
+                      -> PlanPackage ipkg' srcpkg' iresult' ifailure')
+                   -> InstallPlan ipkg  srcpkg  iresult  ifailure
+                   -> InstallPlan ipkg' srcpkg' iresult' ifailure'
+mapPreservingGraph f plan =
+    plan {
+      planIndex      = index,
+      planGraphRev   = Graph.transposeG graph,
+      planPkgOf      = vertexToPkgId,
+      planVertexOf   = fromMaybe noSuchPkgId . pkgIdToVertex
+    }
+  where
+    index = PackageIndex.mapPreservingId f (planIndex plan)
+    (graph, vertexToPkgId, pkgIdToVertex) =
+      PlanIndex.dependencyGraph (planFakeMap plan) index
+    noSuchPkgId = internalError "package is not in the graph"
+
+
+
 -- ------------------------------------------------------------
 -- * Checking validity of plans
 -- ------------------------------------------------------------
@@ -565,21 +644,87 @@ stateDependencyRelation (Failed    _ _) (Failed    _   _) = True
 
 stateDependencyRelation _               _                 = False
 
-
+{-
 -- | Compute the dependency closure of a _source_ package in a install plan
 --
 -- See `Distribution.Client.PlanIndex.dependencyClosure`
-dependencyClosure :: (HasInstalledPackageId ipkg,   PackageFixedDeps ipkg,
-                      HasInstalledPackageId srcpkg, PackageFixedDeps srcpkg)
-                  => InstallPlan ipkg srcpkg iresult ifailure
-                  -> [PackageIdentifier]
-                  -> Either [(PlanPackage ipkg srcpkg iresult ifailure, [InstalledPackageId])]
-                            (PackageIndex (PlanPackage ipkg srcpkg iresult ifailure))
+dependencyClosure
+  :: (HasInstalledPackageId ipkg,   PackageFixedDeps ipkg,
+      HasInstalledPackageId srcpkg, PackageFixedDeps srcpkg)
+  => InstallPlan ipkg srcpkg iresult ifailure
+  -> [PackageIdentifier]
+  -> PackageIndex (PlanPackage ipkg srcpkg iresult ifailure)
 dependencyClosure installPlan pids =
-    PlanIndex.dependencyClosure
-      (planFakeMap installPlan)
-      (planIndex installPlan)
-      (map (resolveFakeId . fakeInstalledPackageId) pids)
+    case PlanIndex.dependencyClosure
+           (planFakeMap installPlan)
+           (planIndex installPlan)
+           (map (resolveFakeId . fakeInstalledPackageId) pids)
+
+      of Right closureIndex -> closureIndex
+         Left [] -> error $ "InstallPlan.dependencyClosure: one of the given "
+                         ++ "package ids is not present in the plan"
+         Left _  -> error $ "InstallPlan.dependencyClosure: the InstallPlan "
+                         ++ "contains broken packages, violating the "
+                         ++ "InstallPlan invariant."
   where
     resolveFakeId :: InstalledPackageId -> InstalledPackageId
     resolveFakeId ipid = Map.findWithDefault ipid ipid (planFakeMap installPlan)
+-}
+dependencyClosure :: InstallPlan ipkg srcpkg iresult ifailure
+                  -> [InstalledPackageId]
+                  -> [PlanPackage ipkg srcpkg iresult ifailure]
+dependencyClosure InstallPlan{ planGraph, planPkgOf, planVertexOf } =
+    map planPkgOf
+  . concatMap Tree.flatten
+  . Graph.dfs planGraph
+  . map planVertexOf
+
+
+reverseDependencyClosure :: InstallPlan ipkg srcpkg iresult ifailure
+                         -> [InstalledPackageId]
+                         -> [PlanPackage ipkg srcpkg iresult ifailure]
+reverseDependencyClosure InstallPlan{ planGraphRev, planPkgOf, planVertexOf } =
+    map planPkgOf
+  . concatMap Tree.flatten
+  . Graph.dfs planGraphRev
+  . map planVertexOf
+
+
+topologicalOrder :: InstallPlan ipkg srcpkg iresult ifailure
+                 -> [PlanPackage ipkg srcpkg iresult ifailure]
+topologicalOrder installPlan = map (planPkgOf installPlan)
+                             . Graph.topSort
+                             $ planGraph installPlan
+
+
+reverseTopologicalOrder :: InstallPlan ipkg srcpkg iresult ifailure
+                        -> [PlanPackage ipkg srcpkg iresult ifailure]
+reverseTopologicalOrder installPlan = map (planPkgOf installPlan)
+                                    . Graph.topSort
+                                    $ planGraphRev installPlan
+{-
+setPackagesBuildInplaceOnly :: [PackageIdentifier]
+                            -> InstallPlan ipkg srcpkg iresult ifailure
+                            -> InstallPlan ipkg srcpkg iresult ifailure
+setPackagesBuildInplaceOnly pkgids installPlan =
+
+    -- find all the packages that are BuildInplaceOnly directly, or depend on
+    -- another pacage that is BuildInplaceOnly
+    let pkgs  = PlanIndex.reverseDependencyClosure
+                   (planFakeMap installPlan)
+                   (planIndex installPlan)
+                   (map (resolveFakeId . fakeInstalledPackageId) pkgids)
+     in installPlan {
+          planIndex = foldl' (\plan pkg -> PackageIndex.insert
+                                             (setBuildInplaceOnly pkg) plan)
+                             (planIndex installPlan) pkgs
+        }
+  where
+    resolveFakeId :: InstalledPackageId -> InstalledPackageId
+    resolveFakeId ipid = Map.findWithDefault ipid ipid (planFakeMap installPlan)
+
+    setBuildInplaceOnly :: PlanPackage -> PlanPackage
+    setBuildInplaceOnly (Configured (ConfiguredPackage srcPkg flags stanzas deps _)) =
+      Configured (ConfiguredPackage srcPkg flags stanzas deps BuildInplaceOnly)
+    setBuildInplaceOnly _ = error "setBuildInplaceOnly: wrong package status"
+-}
