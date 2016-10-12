@@ -123,7 +123,8 @@ data PreBuildHooks = PreBuildHooks {
                             -> IO (),
        hookSelectPlanSubset :: BuildTimeSettings
                             -> ElaboratedInstallPlan
-                            -> IO ElaboratedInstallPlan
+                            -> IO (ElaboratedInstallPlan,
+                                   Map UnitId [PackageTarget])
      }
 
 -- | This holds the context between the pre-build, build and post-build phases.
@@ -147,6 +148,8 @@ data ProjectBuildContext = ProjectBuildContext {
       -- the plan. This does not change between the two plan variants above,
       -- so there is just the one copy.
       elaboratedShared       :: ElaboratedSharedConfig,
+
+      selectedTargets        :: Map UnitId [PackageTarget],
 
       -- | The result of the dry-run phase. This tells us about each member of
       -- the 'elaboratedPlanToExecute'.
@@ -205,7 +208,8 @@ runProjectPreBuildPhase
     -- Now given the specific targets the user has asked for, decide
     -- which bits of the plan we will want to execute.
     --
-    elaboratedPlan' <- hookSelectPlanSubset buildSettings elaboratedPlan
+    (elaboratedPlan', selectedTargets) <-
+      hookSelectPlanSubset buildSettings elaboratedPlan
 
     -- Check which packages need rebuilding.
     -- This also gives us more accurate reasons for the --dry-run output.
@@ -225,6 +229,7 @@ runProjectPreBuildPhase
       elaboratedPlanOriginal = elaboratedPlan,
       elaboratedPlanToExecute  = elaboratedPlan'',
       elaboratedShared,
+      selectedTargets,
       pkgsBuildStatus,
       buildSettings
     }
@@ -345,7 +350,7 @@ selectTargets :: Verbosity -> PackageTarget
               -> [UserBuildTarget]
               -> Bool
               -> ElaboratedInstallPlan
-              -> IO ElaboratedInstallPlan
+              -> IO (ElaboratedInstallPlan, Map UnitId [PackageTarget])
 selectTargets verbosity targetDefaultComponents targetSpecificComponent
               userBuildTargets onlyDependencies installPlan = do
 
@@ -380,11 +385,14 @@ selectTargets verbosity targetDefaultComponents targetSpecificComponent
     --
     let installPlan' = pruneInstallPlanToTargets
                          buildTargets' installPlan
-    if onlyDependencies
-      then either throwIO return $
-             pruneInstallPlanToDependencies
-               (Map.keysSet buildTargets') installPlan'
-      else return installPlan'
+    installPlan'' <-
+      if onlyDependencies
+        then either throwIO return $
+               pruneInstallPlanToDependencies
+                 (Map.keysSet buildTargets') installPlan'
+        else return installPlan'
+
+    return (installPlan'', buildTargets')
   where
     localPackages =
       [ (elabPkgDescription elab, elabPkgSourceLocation elab)

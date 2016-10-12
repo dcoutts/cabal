@@ -23,6 +23,9 @@ import Distribution.Simple.Utils
          ( wrapText )
 import qualified Distribution.Client.Setup as Client
 
+import qualified Data.Map as Map
+
+
 configureCommand :: CommandUI (ConfigFlags, ConfigExFlags
                               ,InstallFlags, HaddockFlags)
 configureCommand = Client.installCommand {
@@ -71,14 +74,14 @@ configureAction (configFlags, configExFlags, installFlags, haddockFlags)
             -- Select the same subset of targets as 'CmdBuild' would
             -- pick (ignoring, for example, executables in libraries
             -- we depend on).
-            selectTargets
-              verbosity
-              BuildDefaultComponents
-              BuildSpecificComponent
-              []
-              (buildSettingOnlyDeps buildSettings')
-              elaboratedPlan
-
+            plan' <- selectTargets
+                       verbosity
+                       BuildDefaultComponents
+                       BuildSpecificComponent
+                       []
+                       (buildSettingOnlyDeps buildSettings')
+                       elaboratedPlan
+            return (plan, Map.empty)
         }
 
     let buildCtx' = buildCtx {
