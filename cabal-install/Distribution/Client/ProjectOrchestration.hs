@@ -64,7 +64,7 @@ import           Distribution.Client.ProjectBuilding
 import           Distribution.Client.ProjectPlanOutput
 
 import           Distribution.Client.Types
-                   ( GenericReadyPackage(..), PackageLocation(..) )
+                   ( GenericReadyPackage(..) )
 import qualified Distribution.Client.InstallPlan as InstallPlan
 import           Distribution.Client.BuildTarget
                    ( UserBuildTarget, resolveUserBuildTargets
@@ -467,9 +467,7 @@ resolveAndCheckTargets targetDefaultComponents
       Map.fromListWith (++)
         [ (packageId elab, [installedUnitId elab])
         | InstallPlan.Configured elab <- InstallPlan.toList installPlan
-        , case elabPkgSourceLocation elab of
-            LocalUnpackedPackage _ -> True; _ -> False
-          --TODO: [code cleanup] is there a better way to identify local packages?
+        , elabLocalToProject elab
         ]
 
     --TODO: [research required] what if the solution has multiple versions of this package?
