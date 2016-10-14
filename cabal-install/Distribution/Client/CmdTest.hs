@@ -30,23 +30,42 @@ import qualified Distribution.Client.Setup as Client
 
 testCommand :: CommandUI (ConfigFlags, ConfigExFlags, InstallFlags, HaddockFlags)
 testCommand = Client.installCommand {
-  commandName         = "new-build",
-  commandSynopsis     = "Builds a Nix-local build project",
-  commandUsage        = usageAlternatives "new-build" [ "[FLAGS]"
-                                                      , "[FLAGS] TARGETS" ],
+  commandName         = "new-test",
+  commandSynopsis     = "Run test-suites",
+  commandUsage        = usageAlternatives "new-test" [ "[TARGETS] [FLAGS]" ],
   commandDescription  = Just $ \_ -> wrapText $
-        "Builds a Nix-local build project, automatically building and installing"
-     ++ "necessary dependencies.",
+        "Runs the specified test-suites, first ensuring they are up to "
+     ++ "date.\n\n"
+
+     ++ "Any test-suite in any package in the project can be specified. "
+     ++ "A package can be specified in which case all the test-suites in the "
+     ++ "package are run. The default is to run all the test-suites in the "
+     ++ "package in the current directory.\n\n"
+
+     ++ "Dependencies are built or rebuilt as necessary. Additional "
+     ++ "configuration flags can be specified on the command line and these "
+     ++ "extend the project configuration from the 'cabal.project', "
+     ++ "'cabal.project.local' and other files.",
   commandNotes        = Just $ \pname ->
         "Examples:\n"
-     ++ "  " ++ pname ++ " new-build           "
-     ++ "    Build the package in the current directory or all packages in the project\n"
-     ++ "  " ++ pname ++ " new-build pkgname   "
-     ++ "    Build the package named pkgname in the project\n"
-     ++ "  " ++ pname ++ " new-build cname   "
-     ++ "    Build the component named cname in the project\n"
-     ++ "  " ++ pname ++ " new-build pkgname:cname   "
-     ++ "    Build the component named cname in the package pkgname\n"
+     ++ "  " ++ pname ++ " new-test\n"
+     ++ "    Run all the test-suites in the package in the current directory\n"
+     ++ "  " ++ pname ++ " new-test pkgname\n"
+     ++ "    Run all the test-suites in the package named pkgname\n"
+     ++ "  " ++ pname ++ " new-test cname\n"
+     ++ "    Run the test-suite named cname\n"
+     ++ "  " ++ pname ++ " new-test cname --enable-coverage\n"
+     ++ "    Run the test-suite built with code coverage (including local libs used)\n\n"
+
+     ++ "Note: this command is part of the new project-based system (aka "
+     ++ "nix-style\nlocal builds). These features are currently in beta. "
+     ++ "Please see\n"
+     ++ "http://cabal.readthedocs.io/en/latest/nix-local-build-overview.html "
+     ++ "for\ndetails and advice on what you can expect to work. If you "
+     ++ "encounter problems\nplease file issues at "
+     ++ "https://github.com/haskell/cabal/issues and if you\nhave any time "
+     ++ "to get involved and help with testing, fixing bugs etc then\nthat "
+     ++ "is very much appreciated.\n"
    }
 
 

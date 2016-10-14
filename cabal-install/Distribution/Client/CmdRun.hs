@@ -30,23 +30,47 @@ import qualified Distribution.Client.Setup as Client
 
 runCommand :: CommandUI (ConfigFlags, ConfigExFlags, InstallFlags, HaddockFlags)
 runCommand = Client.installCommand {
-  commandName         = "new-build",
-  commandSynopsis     = "Builds a Nix-local build project",
-  commandUsage        = usageAlternatives "new-build" [ "[FLAGS]"
-                                                      , "[FLAGS] TARGETS" ],
-  commandDescription  = Just $ \_ -> wrapText $
-        "Builds a Nix-local build project, automatically building and installing"
-     ++ "necessary dependencies.",
+  commandName         = "new-run",
+  commandSynopsis     = "Run an executable.",
+  commandUsage        = usageAlternatives "new-run"
+                          [ "[TARGET] [FLAGS] [-- EXECUTABLE_FLAGS]" ],
+  commandDescription  = Just $ \pname -> wrapText $
+        "Runs the specified executable, first ensuring it is up to date.\n\n"
+
+     ++ "Any executable in any package in the project can be specified. "
+     ++ "A package can be specified if contains just one executable. "
+     ++ "The default is to use the package in the current directory if it "
+     ++ "contains just one executable.\n\n"
+
+     ++ "Extra arguments can be passed to the program, but use '--' to "
+     ++ "separate arguments for the program from arguments for " ++ pname
+     ++ ". The executable is run in an environment where it can find its "
+     ++ "data files inplace in the build tree.\n\n"
+
+     ++ "Dependencies are built or rebuilt as necessary. Additional "
+     ++ "configuration flags can be specified on the command line and these "
+     ++ "extend the project configuration from the 'cabal.project', "
+     ++ "'cabal.project.local' and other files.",
   commandNotes        = Just $ \pname ->
         "Examples:\n"
-     ++ "  " ++ pname ++ " new-build           "
-     ++ "    Build the package in the current directory or all packages in the project\n"
-     ++ "  " ++ pname ++ " new-build pkgname   "
-     ++ "    Build the package named pkgname in the project\n"
-     ++ "  " ++ pname ++ " new-build cname   "
-     ++ "    Build the component named cname in the project\n"
-     ++ "  " ++ pname ++ " new-build pkgname:cname   "
-     ++ "    Build the component named cname in the package pkgname\n"
+     ++ "  " ++ pname ++ " new-run\n"
+     ++ "    Run the executable in the package in the current directory\n"
+     ++ "  " ++ pname ++ " new-run foo-tool\n"
+     ++ "    Run the named executable (in any package in the project)\n"
+     ++ "  " ++ pname ++ " new-run pkgfoo:foo-tool\n"
+     ++ "    Run the executable 'foo-tool' in the package 'pkgfoo'\n"
+     ++ "  " ++ pname ++ " new-run foo -O2 -- dothing --fooflag\n"
+     ++ "    Build with '-O2' and run the program, passing it extra arguments.\n\n"
+
+     ++ "Note: this command is part of the new project-based system (aka "
+     ++ "nix-style\nlocal builds). These features are currently in beta. "
+     ++ "Please see\n"
+     ++ "http://cabal.readthedocs.io/en/latest/nix-local-build-overview.html "
+     ++ "for\ndetails and advice on what you can expect to work. If you "
+     ++ "encounter problems\nplease file issues at "
+     ++ "https://github.com/haskell/cabal/issues and if you\nhave any time "
+     ++ "to get involved and help with testing, fixing bugs etc then\nthat "
+     ++ "is very much appreciated.\n"
    }
 
 

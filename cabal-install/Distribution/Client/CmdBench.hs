@@ -30,23 +30,42 @@ import qualified Distribution.Client.Setup as Client
 
 benchCommand :: CommandUI (ConfigFlags, ConfigExFlags, InstallFlags, HaddockFlags)
 benchCommand = Client.installCommand {
-  commandName         = "new-build",
-  commandSynopsis     = "Builds a Nix-local build project",
-  commandUsage        = usageAlternatives "new-build" [ "[FLAGS]"
-                                                      , "[FLAGS] TARGETS" ],
+  commandName         = "new-bench",
+  commandSynopsis     = "Run benchmarks",
+  commandUsage        = usageAlternatives "new-bench" [ "[TARGETS] [FLAGS]" ],
   commandDescription  = Just $ \_ -> wrapText $
-        "Builds a Nix-local build project, automatically building and installing"
-     ++ "necessary dependencies.",
+        "Runs the specified benchmarks, first ensuring they are up to "
+     ++ "date.\n\n"
+
+     ++ "Any benchmark in any package in the project can be specified. "
+     ++ "A package can be specified in which case all the benchmarks in the "
+     ++ "package are run. The default is to run all the benchmarks in the "
+     ++ "package in the current directory.\n\n"
+
+     ++ "Dependencies are built or rebuilt as necessary. Additional "
+     ++ "configuration flags can be specified on the command line and these "
+     ++ "extend the project configuration from the 'cabal.project', "
+     ++ "'cabal.project.local' and other files.",
   commandNotes        = Just $ \pname ->
         "Examples:\n"
-     ++ "  " ++ pname ++ " new-build           "
-     ++ "    Build the package in the current directory or all packages in the project\n"
-     ++ "  " ++ pname ++ " new-build pkgname   "
-     ++ "    Build the package named pkgname in the project\n"
-     ++ "  " ++ pname ++ " new-build cname   "
-     ++ "    Build the component named cname in the project\n"
-     ++ "  " ++ pname ++ " new-build pkgname:cname   "
-     ++ "    Build the component named cname in the package pkgname\n"
+     ++ "  " ++ pname ++ " new-bench\n"
+     ++ "    Run all the benchmarks in the package in the current directory\n"
+     ++ "  " ++ pname ++ " new-bench pkgname\n"
+     ++ "    Run all the benchmarks in the package named pkgname\n"
+     ++ "  " ++ pname ++ " new-bench cname\n"
+     ++ "    Run the benchmark named cname\n"
+     ++ "  " ++ pname ++ " new-bench cname -O2\n"
+     ++ "    Run the benchmark built with '-O2' (including local libs used)\n\n"
+
+     ++ "Note: this command is part of the new project-based system (aka "
+     ++ "nix-style\nlocal builds). These features are currently in beta. "
+     ++ "Please see\n"
+     ++ "http://cabal.readthedocs.io/en/latest/nix-local-build-overview.html "
+     ++ "for\ndetails and advice on what you can expect to work. If you "
+     ++ "encounter problems\nplease file issues at "
+     ++ "https://github.com/haskell/cabal/issues and if you\nhave any time "
+     ++ "to get involved and help with testing, fixing bugs etc then\nthat "
+     ++ "is very much appreciated.\n"
    }
 
 
