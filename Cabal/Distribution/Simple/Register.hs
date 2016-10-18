@@ -326,6 +326,7 @@ generalInstalledPackageInfo adjustRelIncDirs pkg abi_hash lib lbi clbi installDi
     IPI.libraryDirs        = if hasLibrary
                                then libdir installDirs : extraLibDirs bi
                                else                      extraLibDirs bi,
+    IPI.libraryDynDirs     = [],
     IPI.dataDir            = datadir installDirs,
     IPI.hsLibraries        = if hasLibrary
                                then [getHSLibraryName (componentUnitId clbi)]
