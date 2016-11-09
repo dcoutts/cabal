@@ -292,7 +292,7 @@ addBuildableCondition :: (Eq v, Monoid a, Monoid c) => (a -> BuildInfo)
 addBuildableCondition getInfo t =
   case extractCondition (buildable . getInfo) t of
     Lit True  -> t
-    Lit False -> CondNode mempty mempty []
+    Lit False -> mapTreeConstrs (const mempty) t
     c         -> CondNode mempty mempty [(c, t, Nothing)]
 
 -- Note: extracting buildable conditions.
