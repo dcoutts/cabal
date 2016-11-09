@@ -10,25 +10,24 @@ module Distribution.Client.CmdRepl (
 import Distribution.Client.ProjectOrchestration
 import Distribution.Client.ProjectConfig
          ( BuildTimeSettings(..) )
-import Distribution.Client.ProjectPlanning
-         ( PackageTarget(..) )
 import Distribution.Client.BuildTarget
          ( readUserBuildTargets )
 
 import Distribution.Client.Setup
          ( GlobalFlags, ConfigFlags(..), ConfigExFlags, InstallFlags )
+import qualified Distribution.Client.Setup as Client
 import Distribution.Simple.Setup
          ( HaddockFlags, fromFlagOrDefault )
-import Distribution.Verbosity
-         ( normal )
-
-import Control.Monad (when)
-
 import Distribution.Simple.Command
          ( CommandUI(..), usageAlternatives )
+import Distribution.Verbosity
+         ( normal )
 import Distribution.Simple.Utils
          ( wrapText, die )
-import qualified Distribution.Client.Setup as Client
+
+import qualified Data.Map as Map
+import Control.Monad (when)
+
 
 replCommand :: CommandUI (ConfigFlags, ConfigExFlags, InstallFlags, HaddockFlags)
 replCommand = Client.installCommand {
@@ -73,6 +72,7 @@ replCommand = Client.installCommand {
      ++ "is very much appreciated.\n"
    }
 
+
 -- | The @repl@ command is very much like @build@. It brings the install plan
 -- up to date, selects that part of the plan needed by the given or implicit
 -- repl target and then executes the plan.
@@ -85,7 +85,7 @@ replCommand = Client.installCommand {
 -- "Distribution.Client.ProjectOrchestration"
 --
 replAction :: (ConfigFlags, ConfigExFlags, InstallFlags, HaddockFlags)
-              -> [String] -> GlobalFlags -> IO ()
+           -> [String] -> GlobalFlags -> IO ()
 replAction (configFlags, configExFlags, installFlags, haddockFlags)
            targetStrings globalFlags = do
 
@@ -99,24 +99,37 @@ replAction (configFlags, configExFlags, installFlags, haddockFlags)
         PreBuildHooks {
           hookPrePlanning      = \_ _ _ -> return (),
 
-          hookSelectPlanSubset = \buildSettings elaboratedPlan -> do
+          hookSelectPlanSubset = \buildSettings
+                                  elaboratedPlan localPackages -> do
             when (buildSettingOnlyDeps buildSettings) $
               die $ "The repl command does not support '--only-dependencies'. "
                  ++ "You may wish to use 'build --only-dependencies' and then "
                  ++ "use 'repl'."
+
             -- Interpret the targets on the command line as repl targets
             -- (as opposed to say build or haddock targets).
-            selectTargets
-              verbosity
-              ReplDefaultComponent
-              ReplSpecificComponent
-              userTargets
-              False -- onlyDependencies, always False for repl
-              elaboratedPlan
-            --TODO: [required eventually] reject multiple targets, or at least
-            -- targets spanning multiple components. ie it's ok to have two
-            -- module/file targets in the same component, but not two that live
-            -- in different components.
+            targets <- either reportReplTargetProblems return
+                   =<< resolveTargets
+                         selectPackageTargets
+                         selectComponentTarget
+                         TargetProblemCommon
+                         elaboratedPlan
+                         localPackages
+                         userTargets
+
+            when (Map.size targets > 1) $
+              let problem = TargetsMultiple (Map.elems targets)
+               in reportReplTargetProblems [problem]
+
+            --TODO: [required eventually] handle no targets case
+            when (Map.null targets) $
+              fail "TODO handle no targets case"
+
+            let elaboratedPlan' = pruneInstallPlanToTargets
+                                    TargetActionRepl
+                                    targets
+                                    elaboratedPlan
+            return (elaboratedPlan', targets)
         }
 
     printPlan verbosity buildCtx
@@ -126,3 +139,49 @@ replAction (configFlags, configExFlags, installFlags, haddockFlags)
   where
     verbosity = fromFlagOrDefault normal (configVerbosity configFlags)
 
+-- For repl: select the library if there is one and it's buildable,
+-- or select the exe if there is only one and it's buildable.
+--
+-- Fail if there are no buildable lib/exe components, or if there are
+-- multiple libs or exes.
+--
+selectPackageTargets  :: BuildTarget PackageId
+                      -> [AvailableTarget k] -> Either ReplTargetProblem [k]
+selectPackageTargets _bt ts
+  | [libt] <- libts    = Right [libt]
+  | (_:_)  <- libts    = Left TargetPackageMultipleLibs
+
+  | [exet] <- exets    = Right [exet]
+  | (_:_)  <- exets    = Left TargetPackageMultipleExes
+
+  | (_:_)  <- alllibts = Left TargetPackageNoBuildableLibs
+  | (_:_)  <- allexets = Left TargetPackageNoBuildableExes
+  | otherwise          = Left TargetPackageNoTargets
+  where
+    alllibts = [ t | t <- ts, availableTargetIsLib t ]
+    libts    = [ k | TargetBuildable k _ <- map availableTargetStatus alllibts ]
+    allexets = [ t | t <- ts, availableTargetIsExe t ]
+    exets    = [ k | TargetBuildable k _ <- map availableTargetStatus allexets ]
+
+
+-- For checking an individual component target, for build there's no
+-- additional checks we need beyond the basic ones.
+--
+selectComponentTarget :: BuildTarget PackageId
+                      -> AvailableTarget k -> Either ReplTargetProblem k
+selectComponentTarget bt =
+    either (Left . TargetProblemCommon) Right
+  . selectComponentTargetBasic bt
+
+data ReplTargetProblem =
+     TargetPackageMultipleLibs
+   | TargetPackageMultipleExes
+   | TargetPackageNoBuildableLibs
+   | TargetPackageNoBuildableExes
+   | TargetPackageNoTargets
+   | TargetProblemCommon TargetProblem
+   | TargetsMultiple [[ComponentTarget]] --TODO: more detail needed
+  deriving Show
+
+reportReplTargetProblems :: [ReplTargetProblem] -> IO a
+reportReplTargetProblems = fail . show

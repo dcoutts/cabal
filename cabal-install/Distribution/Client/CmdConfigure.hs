@@ -7,8 +7,6 @@ module Distribution.Client.CmdConfigure (
 
 import Distribution.Client.ProjectOrchestration
 import Distribution.Client.ProjectConfig
-import Distribution.Client.ProjectPlanning
-         ( PackageTarget(..) )
 
 import Distribution.Client.Setup
          ( GlobalFlags, ConfigFlags(..), ConfigExFlags, InstallFlags )
@@ -102,18 +100,11 @@ configureAction (configFlags, configExFlags, installFlags, haddockFlags)
             -- planning phase.
             writeProjectLocalExtraConfig rootDir cliConfig,
 
-          hookSelectPlanSubset = \buildSettings' elaboratedPlan -> do
-            -- Select the same subset of targets as 'CmdBuild' would
+          hookSelectPlanSubset = \_ elaboratedPlan _ -> do
+            -- TODO: Select the same subset of targets as 'CmdBuild' would
             -- pick (ignoring, for example, executables in libraries
             -- we depend on).
-            plan' <- selectTargets
-                       verbosity
-                       BuildDefaultComponents
-                       BuildSpecificComponent
-                       []
-                       (buildSettingOnlyDeps buildSettings')
-                       elaboratedPlan
-            return (plan, Map.empty)
+            return (elaboratedPlan, Map.empty)
         }
 
     let buildCtx' = buildCtx {

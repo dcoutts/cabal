@@ -36,7 +36,6 @@ module Distribution.Client.ProjectPlanning.Types (
     CabalFileText,
 
     -- * Build targets
-    PackageTarget(..),
     ComponentTarget(..),
     showComponentTarget,
     SubComponentTarget(..),
@@ -535,21 +534,10 @@ type ElaboratedReadyPackage = GenericReadyPackage ElaboratedConfiguredPackage
 -- Build targets
 --
 
--- | The various targets within a package. This is more of a high level
+-- | Specific targets within a package or component to act on e.g. to build,
+-- haddock or open a repl. These is is more of a high level
 -- specification than a elaborated prescription.
 --
-data PackageTarget =
-     -- | Build the default components in this package. This usually means
-     -- just the lib and exes, but it can also mean the testsuites and
-     -- benchmarks if the user explicitly requested them.
-     BuildDefaultComponents
-     -- | Build a specific component in this package.
-   | BuildSpecificComponent ComponentTarget
-   | ReplDefaultComponent
-   | ReplSpecificComponent  ComponentTarget
-   | HaddockDefaultComponents
-  deriving (Eq, Show, Generic)
-
 data ComponentTarget = ComponentTarget ComponentName SubComponentTarget
   deriving (Eq, Ord, Show, Generic)
 
@@ -558,7 +546,6 @@ data SubComponentTarget = WholeComponent
                         | FileTarget   FilePath
   deriving (Eq, Ord, Show, Generic)
 
-instance Binary PackageTarget
 instance Binary ComponentTarget
 instance Binary SubComponentTarget
 

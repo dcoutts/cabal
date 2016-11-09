@@ -48,11 +48,13 @@ import Distribution.Client.Types
          ( PackageLocation(..) )
 
 import Distribution.PackageDescription
-         ( PackageDescription
+         ( GenericPackageDescription, PackageDescription
          , Executable(..)
          , TestSuite(..), TestSuiteInterface(..), testModules
          , Benchmark(..), BenchmarkInterface(..), benchmarkModules
          , BuildInfo(..), explicitLibModules, exeModules )
+import Distribution.PackageDescription.Configuration
+         ( flattenPackageDescription )
 import Distribution.ModuleName
          ( ModuleName, toFilePath )
 import Distribution.Simple.LocalBuildInfo
@@ -63,7 +65,7 @@ import Distribution.Types.ForeignLib
 import Distribution.Text
          ( display, simpleParse )
 import Distribution.Simple.Utils
-         ( die, lowercase )
+         ( die, lowercase, ordNub )
 import Distribution.Client.Utils
          ( makeRelativeToCwd )
 
@@ -269,7 +271,7 @@ readUserBuildTargets targetStrs = do
 -- locations). It fails with an error if any user string cannot be matched to
 -- a valid target.
 --
-resolveUserBuildTargets :: [(PackageDescription, PackageLocation a)]
+resolveUserBuildTargets :: [(GenericPackageDescription, PackageLocation a)]
                         -> [UserBuildTarget] -> IO [BuildTarget PackageId]
 resolveUserBuildTargets pkgs utargets = do
     utargets' <- mapM getUserTargetFileStatus utargets
@@ -1073,11 +1075,12 @@ type ComponentStringName = String
 instance Package PackageInfo where
   packageId = pinfoId
 
---TODO: [required eventually] need the original GenericPackageDescription or
--- the flattening thereof because we need to be able to target modules etc
--- that are not enabled in the current configuration.
-selectPackageInfo :: PackageDescription -> PackageLocation a -> IO PackageInfo
-selectPackageInfo pkg loc = do
+selectPackageInfo :: GenericPackageDescription -> PackageLocation a
+                  -> IO PackageInfo
+selectPackageInfo gpkg loc = do
+    -- We flatten the GenericPackageDescription so we are able to target
+    -- modules etc that are not enabled in the current configuration.
+    let pkg = flattenPackageDescription gpkg
     (pkgdir, pkgfile) <-
       case loc of
         --TODO: local tarballs, remote tarballs etc
@@ -1109,14 +1112,16 @@ selectComponentInfo pinfo pkg =
         cinfoName    = componentName c,
         cinfoStrName = componentStringName pkg (componentName c),
         cinfoPackage = pinfo,
-        cinfoSrcDirs = hsSourceDirs bi,
+        -- We used flattenPackageDescription, so we get both sides of all
+        -- conditionionals, so we can easily get duplicates, so nub everything.
+        cinfoSrcDirs = ordNub (hsSourceDirs bi),
 --                       [ pkgroot </> srcdir
 --                       | (pkgroot,_) <- maybeToList (pinfoDirectory pinfo)
 --                       , srcdir <- hsSourceDirs bi ],
-        cinfoModules = componentModules c,
-        cinfoHsFiles = componentHsFiles c,
-        cinfoCFiles  = cSources bi,
-        cinfoJsFiles = jsSources bi
+        cinfoModules = ordNub (componentModules c),
+        cinfoHsFiles = ordNub (componentHsFiles c),
+        cinfoCFiles  = ordNub (cSources bi),
+        cinfoJsFiles = ordNub (jsSources bi)
       }
     | c <- pkgComponents pkg
     , let bi = componentBuildInfo c ]

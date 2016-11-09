@@ -8,23 +8,29 @@ module Distribution.Client.CmdBuild (
 import Distribution.Client.ProjectOrchestration
 import Distribution.Client.ProjectConfig
          ( BuildTimeSettings(..) )
-import Distribution.Client.ProjectPlanning
-         ( PackageTarget(..) )
 import Distribution.Client.BuildTarget
          ( readUserBuildTargets )
 
 import Distribution.Client.Setup
          ( GlobalFlags, ConfigFlags(..), ConfigExFlags, InstallFlags )
+import qualified Distribution.Client.Setup as Client
 import Distribution.Simple.Setup
          ( HaddockFlags, fromFlagOrDefault )
-import Distribution.Verbosity
-         ( normal )
-
 import Distribution.Simple.Command
          ( CommandUI(..), usageAlternatives )
+import Distribution.Package
+         ( packageId )
+import Distribution.Verbosity
+         ( normal )
+import Distribution.Text
+         ( display )
 import Distribution.Simple.Utils
-         ( wrapText )
-import qualified Distribution.Client.Setup as Client
+         ( wrapText, die )
+
+import Data.List (nub, intercalate)
+import qualified Data.Map as Map
+import Control.Monad (when)
+
 
 buildCommand :: CommandUI (ConfigFlags, ConfigExFlags, InstallFlags, HaddockFlags)
 buildCommand = Client.installCommand {
@@ -90,16 +96,35 @@ buildAction (configFlags, configExFlags, installFlags, haddockFlags)
         PreBuildHooks {
           hookPrePlanning      = \_ _ _ -> return (),
 
-          hookSelectPlanSubset = \buildSettings' elaboratedPlan -> do
+          hookSelectPlanSubset = \buildSettings'
+                                  elaboratedPlan localPackages -> do
             -- Interpret the targets on the command line as build targets
             -- (as opposed to say repl or haddock targets).
-            selectTargets
-              verbosity
-              BuildDefaultComponents
-              BuildSpecificComponent
-              userTargets
-              (buildSettingOnlyDeps buildSettings')
-              elaboratedPlan
+            targets <- either reportBuildTargetProblems return
+                   =<< resolveTargets
+                         selectPackageTargets
+                         selectComponentTarget
+                         TargetProblemCommon
+                         elaboratedPlan
+                         localPackages
+                         userTargets
+
+            --TODO: [required eventually] handle no targets case
+            when (Map.null targets) $
+              fail "TODO handle no targets case"
+
+            let elaboratedPlan' = pruneInstallPlanToTargets
+                                    TargetActionBuild
+                                    targets
+                                    elaboratedPlan
+            elaboratedPlan'' <-
+              if buildSettingOnlyDeps buildSettings'
+                then either reportCannotPruneDependencies return $
+                     pruneInstallPlanToDependencies (Map.keysSet targets)
+                                                    elaboratedPlan'
+                else return elaboratedPlan'
+
+            return (elaboratedPlan'', targets)
         }
 
     printPlan verbosity buildCtx
@@ -108,3 +133,53 @@ buildAction (configFlags, configExFlags, installFlags, haddockFlags)
     runProjectPostBuildPhase verbosity buildCtx buildOutcomes
   where
     verbosity = fromFlagOrDefault normal (configVerbosity configFlags)
+
+-- For build: select all components except non-buildable and disabled
+-- tests/benchmarks, fail if there are no such components
+--
+selectPackageTargets :: BuildTarget PackageId
+                     -> [AvailableTarget k] -> Either BuildTargetProblem [k]
+selectPackageTargets _bt ts
+  | (_:_)  <- enabledts = Right enabledts
+  | (_:_)  <- ts        = Left TargetPackageNoEnabledTargets -- allts
+  | otherwise           = Left TargetPackageNoTargets
+  where
+    enabledts = [ k | TargetBuildable k TargetRequestedByDefault
+                        <- map availableTargetStatus ts ]
+
+-- For checking an individual component target, for build there's no
+-- additional checks we need beyond the basic ones.
+--
+selectComponentTarget :: BuildTarget PackageId
+                      -> AvailableTarget k -> Either BuildTargetProblem k
+selectComponentTarget bt =
+    either (Left . TargetProblemCommon) Right
+  . selectComponentTargetBasic bt
+
+data BuildTargetProblem =
+     TargetPackageNoEnabledTargets
+   | TargetPackageNoTargets
+   | TargetProblemCommon TargetProblem
+  deriving Show
+
+reportBuildTargetProblems :: [BuildTargetProblem] -> IO a
+reportBuildTargetProblems = fail . show
+
+
+reportCannotPruneDependencies :: CannotPruneDependencies -> IO a
+reportCannotPruneDependencies = die . renderCannotPruneDependencies
+
+renderCannotPruneDependencies :: CannotPruneDependencies -> String
+renderCannotPruneDependencies (CannotPruneDependencies brokenPackages) =
+      "Cannot select only the dependencies (as requested by the "
+   ++ "'--only-dependencies' flag), "
+   ++ (case pkgids of
+          [pkgid] -> "the package " ++ display pkgid ++ " is "
+          _       -> "the packages "
+                     ++ intercalate ", " (map display pkgids) ++ " are ")
+   ++ "required by a dependency of one of the other targets."
+  where
+    -- throw away the details and just list the deps that are needed
+    pkgids :: [PackageId]
+    pkgids = nub . map packageId . concatMap snd $ brokenPackages
+

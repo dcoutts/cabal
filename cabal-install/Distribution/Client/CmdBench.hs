@@ -10,23 +10,24 @@ module Distribution.Client.CmdBench (
 import Distribution.Client.ProjectOrchestration
 import Distribution.Client.ProjectConfig
          ( BuildTimeSettings(..) )
-import Distribution.Client.ProjectPlanning
-         ( PackageTarget(..) )
 import Distribution.Client.BuildTarget
          ( readUserBuildTargets )
 
 import Distribution.Client.Setup
          ( GlobalFlags, ConfigFlags(..), ConfigExFlags, InstallFlags )
+import qualified Distribution.Client.Setup as Client
 import Distribution.Simple.Setup
          ( HaddockFlags, fromFlagOrDefault )
-import Distribution.Verbosity
-         ( normal )
-
 import Distribution.Simple.Command
          ( CommandUI(..), usageAlternatives )
+import Distribution.Verbosity
+         ( normal )
 import Distribution.Simple.Utils
-         ( wrapText )
-import qualified Distribution.Client.Setup as Client
+         ( wrapText, die )
+
+import qualified Data.Map as Map
+import Control.Monad (when)
+
 
 benchCommand :: CommandUI (ConfigFlags, ConfigExFlags, InstallFlags, HaddockFlags)
 benchCommand = Client.installCommand {
@@ -91,16 +92,33 @@ benchAction (configFlags, configExFlags, installFlags, haddockFlags)
         PreBuildHooks {
           hookPrePlanning      = \_ _ _ -> return (),
 
-          hookSelectPlanSubset = \buildSettings elaboratedPlan -> do
-            -- Interpret the targets on the command line as build targets
-            -- (as opposed to say repl or haddock targets).
-            selectTargets
-              verbosity
-              BuildDefaultComponents
-              BuildSpecificComponent
-              userTargets
-              (buildSettingOnlyDeps buildSettings)
-              elaboratedPlan
+          hookSelectPlanSubset = \buildSettings
+                                  elaboratedPlan localPackages -> do
+            when (buildSettingOnlyDeps buildSettings) $
+              die $ "The bench command does not support '--only-dependencies'. "
+                 ++ "You may wish to use 'build --only-dependencies' and then "
+                 ++ "use 'bench'."
+
+            -- Interpret the targets on the command line as bench targets
+            -- (as opposed to say build or haddock targets).
+            targets <- either reportBenchTargetProblems return
+                   =<< resolveTargets
+                         selectPackageTargets
+                         selectComponentTarget
+                         TargetProblemCommon
+                         elaboratedPlan
+                         localPackages
+                         userTargets
+
+            --TODO: [required eventually] handle no targets case
+            when (Map.null targets) $
+              fail "TODO handle no targets case"
+
+            let elaboratedPlan' = pruneInstallPlanToTargets
+                                    TargetActionBuild
+                                    targets
+                                    elaboratedPlan
+            return (elaboratedPlan', targets)
         }
 
     printPlan verbosity buildCtx
@@ -110,3 +128,37 @@ benchAction (configFlags, configExFlags, installFlags, haddockFlags)
   where
     verbosity = fromFlagOrDefault normal (configVerbosity configFlags)
 
+-- For bench: select all buildable benchmarks
+-- Fail if there are no benchmarks or no buildable benchmarks.
+--
+selectPackageTargets :: BuildTarget PackageId
+                     -> [AvailableTarget k] -> Either BenchTargetProblem [k]
+selectPackageTargets _bt ts
+  | (_:_)  <- benchts    = Right benchts
+  | (_:_)  <- allbenchts = Left (TargetPackageNoEnabledBenchmarks allbenchts')
+  | otherwise            = Left (TargetPackageNoBenchmarks        allbenchts')
+  where
+    allbenchts = [ t | t <- ts, availableTargetIsBench t ]
+    benchts    = [ k | TargetBuildable k _
+                         <- map availableTargetStatus allbenchts ]
+    allbenchts'= [ fmap (const ()) t | t <- allbenchts ]
+
+
+selectComponentTarget :: BuildTarget PackageId
+                      -> AvailableTarget k -> Either BenchTargetProblem  k
+selectComponentTarget bt t
+  | not (availableTargetIsBench t)
+              = Left (TargetComponentNotBenchmark (fmap (const ()) t))
+  | otherwise = either (Left . TargetProblemCommon) return $
+                selectComponentTargetBasic bt t
+
+data BenchTargetProblem =
+     TargetPackageNoEnabledBenchmarks [AvailableTarget ()]
+   | TargetPackageNoBenchmarks        [AvailableTarget ()]
+   | TargetComponentNotBenchmark      (AvailableTarget ())
+   | TargetProblemCommon               TargetProblem
+
+  deriving Show
+
+reportBenchTargetProblems :: [BenchTargetProblem] -> IO a
+reportBenchTargetProblems = fail . show

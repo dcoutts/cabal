@@ -121,7 +121,7 @@ freezeAction (configFlags, configExFlags, installFlags, haddockFlags)
                       installFlags haddockFlags
 
 
-    (_, elaboratedPlan, _, _) <-
+    (_, elaboratedPlan, _, _, _) <-
       rebuildInstallPlan verbosity
                          projectRootDir distDirLayout cabalDirLayout
                          cliConfig
